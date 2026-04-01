@@ -1,51 +1,54 @@
 # Training Server (бэкенд)
 
-Небольшой сервер на FastAPI для загрузки, хранения и анализа аудиозаписей студентов. Данные сохраняются в локальном дереве `records/`, поддерживается пакетный и одиночный анализ через OpenAI, результаты анализа сохраняются в SQLite.
+Небольшой сервер на FastAPI для загрузки, хранения и анализа аудиозаписей студентов. Данные сохраняются в локальном дереве `records/`, поддерживается пакетный и одиночный анализ через внешний AI-сервис, результаты анализа сохраняются в SQLite.
 
 ---
 
 ## 🔧 Требования
 
 - Python 3.10+ (проверено с 3.11)
-- Установите зависимости (минимальный набор):
+- Установите зависимости (см. requirements.txt):
   - fastapi
   - uvicorn[standard]
   - sqlalchemy
   - pydantic>=2
   - pydantic-settings>=2
   - python-multipart
-  - openai>=1.0
+  - requests
 
 Пример установки:
 
 ```bash
-pip install fastapi "uvicorn[standard]" sqlalchemy "pydantic>=2" "pydantic-settings>=2" python-multipart "openai>=1.0"
+pip install -r requirements.txt
 ```
 
 ---
 
 ## ⚙️ Конфигурация
 
-Настройки определены в [app/config.py](app/config.py) и могут быть переопределены через файл `.env` (загружается из корня проекта). Имена переменных окружения совпадают с названиями полей (в нижнем регистре):
+Настройки определены в [app/config.py](app/config.py) и могут быть переопределены через файл `.env` (загружается из корня проекта). Имена переменных окружения совпадают с названиями полей (в нижнем регистре). См. пример: [.env.example](.env.example)
 
 ```env
-# Унаследовано, сейчас напрямую эндпоинтами не используется
-ai_analysis_url=https://text-convector-germangch.waw0.amvera.tech/api/v1/send_to_ai_analize
+# Внешний сервис анализа (API root)
+ai_analysis_url=https://text-convector-germangch.waw0.amvera.tech
 
-# Корень хранения загрузок
+# Модель для внешнего сервиса
+ai_model=gpt-4.1-2025-04-14
+
+# Путь к каталогу сессий
 records_dir=records
 
-# URL базы данных SQLAlchemy (относительно текущей рабочей директории)
+# URL БД (SQLite в формате SQLAlchemy-пути, будет преобразован в файловый путь)
 database_url=sqlite:///./analysis_results.db
 
-# OpenAI
-openai_api_key=sk-...             # ОБЯЗАТЕЛЕН для работы эндпоинтов анализа
-openai_model=gpt-audio-mini-2025-12-15
+# Промпты (необязательно)
+system_prompt=...
+user_prompt=Please analyze the following student transcript and provide feedback and a numeric score.
 ```
 
 Заметки:
-- Для работы анализа необходимо задать `openai_api_key`. Клиент инициализируется из этого ключа при старте.
-- `ai_analysis_url` сохранён для совместимости, но в текущем потоке на основе OpenAI не используется.
+- Для работы анализа необходимо настроить `ai_analysis_url`.
+ - Эндпоинты внешнего сервиса, которые использует приложение: `/api/v1/spech_to_text` (распознавание; multipart с `file`) и `/api/v1/ask` (анализ; поля `system_prompt`, `user_prompt`, `model`).
 
 ---
 
@@ -66,10 +69,12 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 5000
 ## 📁 Структура проекта
 
 - [app/main.py](app/main.py) — приложение FastAPI, CORS, подключение роутеров
-- [app/routes.py](app/routes.py) — эндпоинты для загрузки, списка, скачивания и AI-анализа
+- [app/routes/](app/routes/) — пакет с роутерами, разделёнными по логическим группам:
+  - [student_hierarchy_routes.py](app/routes/student_hierarchy_routes.py) — эндпоинты для списка и скачивания записей
+  - [analysis_routes.py](app/routes/analysis_routes.py) — эндпоинты для анализа записей
+  - [upload_routes.py](app/routes/upload_routes.py) — эндпоинты для загрузки записей
 - [app/DBController/db_router.py](app/DBController/db_router.py) — модели SQLite и эндпоинты данных
 - [records/](records/) — хранилище загруженных данных студентов (создаётся по требованию)
-- [analysis.csv](analysis.csv) — последний экспорт результатов пакетного анализа (перезаписывается)
 - Файл SQLite по `database_url` (по умолчанию `analysis_results.db` в текущей рабочей директории)
 
 ---
@@ -95,7 +100,7 @@ records/
 }
 ```
 
-Процесс анализа сопоставляет текстовые реплики с аудиофайлами по их числовым именам: `1.*` соотносится с первой текстовой записью и т. д. (ожидаются имена вида `1.mp3`, `2.mp3`, ...).
+Процесс анализа сопоставляет текстовые реплики с аудиофайлами по их числовым именам. При наличии `metadata.json` используется массив `data` и обрабатываются элементы с нечётными индексами (1, 3, 5, ... по 1-базной нумерации), сопоставляя их со следующими чётными файлами (2, 4, 6, ...). Ожидаются аудиофайлы вида `1.mp3`, `2.mp3`, ... Если `metadata.json` отсутствует, файлы обрабатываются по порядку.
 
 ---
 
@@ -109,7 +114,8 @@ records/
 - Тело: `multipart/form-data`
   - `data`: JSON-строка по схеме выше
   - `file`: архив `.zip` с аудиофайлами внутри (внутренние пути извлекаются в `source_audio/`)
-- Ответ: `{ filename, files_inside, status }`
+  - `student`: опционально, имя студента; если не задано, берётся из `data.student` или `"unknown"`
+- Ответ: `{ filename, files_inside, status, student, date }`
 
 ---
 
@@ -131,42 +137,44 @@ records/
 ### Анализ: пакетный (с сохранением в БД)
 
 - Метод/путь: `POST /student_analize_record`
-- Параметры запроса: `name`, `date`
-- Поведение: Для каждой пары «текст + аудио» выполняется вызов OpenAI и результат сохраняется в SQLite. Также формируется CSV-снимок в [analysis.csv](analysis.csv).
-- Ответ: `{ original: string[], answers: string[] }`
+- Тело: `multipart/form-data`
+  - `name`: имя студента
+  - `date`: метка времени сессии (папка в `records/<name>/<date>`)
+- Поведение: для каждого файла из `source_audio/` делает распознавание и анализ, сохраняет результат в SQLite; предыдущие результаты для той же пары (name, date) удаляются
+- Ответ: `{ student, date, processed: [{ file, transcript, ai_answer_present }] }`
 
 ---
 
-### Анализ: одиночный (без записи в БД)
+### Анализ: одиночный (с сохранением в БД)
 
 - Метод/путь: `POST /student_analyze_single`
 - Тело: `multipart/form-data`
   - `file`: аудиофайл (одна реплика)
-  - `language`: например, `ru`, `en` (возвращается в ответе)
-  - `transcript`: текст расшифровки аудио
-- Ответ: `{ language, transcript, answer }`
+  - `language`: строка (эхается в ответе как часть параметров, в текущей версии не влияет на логику)
+  - `transcript`: опционально, готовая расшифровка; если не задана — выполняется распознавание
+  - `student`: опционально, имя студента
+- Ответ: `{ student, date, transcript, ai_answer }`
 
 ---
 
 ### Данные: история студента
 
 - Метод/путь: `GET /get_student_history/{name}`
-- Ответ: массив объектов `{ date, original, answer }`. `answer` — сохранённый результат ИИ.
+- Ответ: массив объектов `{ date, original, answer }`. `answer` — сохранённый текст ответа ИИ (массив строк), `original` — исходные тексты (массив строк).
 
 ---
 
 ## 🗄️ Хранение данных
 
-- URL БД берётся из `database_url` (по умолчанию `sqlite:///./analysis_results.db`).
-- Модель SQLAlchemy: `analysis_results(id, student_name, date, original_text, ai_answer)`.
-- Файл-экспорт: [analysis.csv](analysis.csv) перезаписывается при пакетном анализе.
+- URL БД берётся из `database_url` (по умолчанию `sqlite:///./analysis_results.db`), используется `sqlite3`.
+- Таблица: `analysis_results(id, student_name, date, original_text, ai_answer)`; поля `original_text` и `ai_answer` содержат JSON-строки с массивами.
 
 ---
 
 ## 🔐 CORS и безопасность
 
 - CORS сейчас настроен на разрешение всех источников в [app/main.py](app/main.py). В продакшене следует сузить список доменов.
-- Устанавливайте `openai_api_key` через `.env` или переменные окружения. Не храните секреты в коде при прод-использовании.
+- Настройки сервиса задаются через `.env` или переменные окружения.
 
 ---
 
@@ -198,5 +206,11 @@ curl -X POST "http://127.0.0.1:5000/api/v1/student_analyze_single" \
 Пакетный анализ с сохранением:
 
 ```bash
-curl -X POST "http://127.0.0.1:5000/api/v1/student_analize_record?name=pomelo&date=2026-03-11_13-17-27"
+curl -X POST "http://127.0.0.1:5000/api/v1/student_analize_record" \
+  -F "name=pomelo" \
+  -F "date=2026-03-11_13-17-27"
+
+```
+
+Примечание: сервер извлекает из ответа внешнего сервиса только текстовую часть. Если ответ приходит как HTML, приложение берёт содержимое блока <pre>... </pre>, чтобы в БД сохранялся чистый текст ответа модели.
 ```

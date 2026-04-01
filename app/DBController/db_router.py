@@ -1,75 +1,118 @@
-import json
-from sqlalchemy.orm import Session
-from fastapi import APIRouter, File, UploadFile, Form, HTTPException
-from sqlalchemy import create_engine, Column, Integer, String, Text, Index
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-
-db_router = APIRouter()
-
+from fastapi import APIRouter
+from pydantic import BaseModel
 from config import settings
+import os
+import sqlite3
+import json
+from typing import List
+import logging
 
-# Создаем файл базы данных
-DATABASE_URL = settings.database_url
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+router = APIRouter()
+logger = logging.getLogger(__name__)
 
-class AnalysisResult(Base):
-    __tablename__ = "analysis_results"
 
-    id = Column(Integer, primary_key=True, index=True)
-    student_name = Column(String, index=True)  # Индекс для быстрого поиска
-    date = Column(String)
-    original_text = Column(Text)
-    ai_answer = Column(Text)  # Здесь будем хранить JSON как строку
-
-# Создаем таблицы
-Base.metadata.create_all(bind=engine)
-
-def save_or_update_analysis(db: Session, name: str, date: str, original_text: str, ai_answer: dict):
-    """
-    Ищет запись по имени студента и тексту. 
-    Если находит — обновляет ответ, если нет — создает новую.
-    """
-    ai_answer_str = json.dumps(ai_answer, ensure_ascii=False)
-    
-    # Пытаемся найти существующую запись
-    existing_record = db.query(AnalysisResult).filter(
-        AnalysisResult.student_name == name,
-        AnalysisResult.original_text == original_text
-    ).first()
-
-    if existing_record:
-        # Обновляем
-        existing_record.ai_answer = ai_answer_str
-        existing_record.date = date
-        return existing_record
-    else:
-        # Создаем новую
-        new_record = AnalysisResult(
-            student_name=name,
-            date=date,
-            original_text=original_text,
-            ai_answer=ai_answer_str
+def init_db():
+    db_path = settings.database_url.replace("sqlite:///", "")
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analysis_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_name TEXT,
+            date TEXT,
+            original_text TEXT,
+            ai_answer TEXT
         )
-        db.add(new_record)
-        return new_record
-    
-@db_router.post("/")
-async def students_hierarhy():
-    return {"OK":"OK"}
+        """
+    )
+    conn.commit()
+    conn.close()
+    logger.info("Database initialized at %s", db_path)
 
-@db_router.get("/get_student_history/{name}")
-async def get_history(name: str):
-    db = SessionLocal()
-    results = db.query(AnalysisResult).filter(AnalysisResult.student_name == name).all()
-    db.close()
-    
-    return [
-        {
-            "date": r.date,
-            "original": r.original_text,
-            "answer": json.loads(r.ai_answer) # Превращаем строку обратно в объект
-        } for r in results
-    ]
+
+init_db()
+
+
+def _ensure_table(conn: sqlite3.Connection):
+    c = conn.cursor()
+    c.execute(
+        """
+        CREATE TABLE IF NOT EXISTS analysis_results (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            student_name TEXT,
+            date TEXT,
+            original_text TEXT,
+            ai_answer TEXT
+        )
+        """
+    )
+    conn.commit()
+
+
+class HistoryItem(BaseModel):
+    date: str
+    original: List[str]
+    answer: List[str]
+
+
+@router.get("/get_student_history/{name}")
+def get_student_history(name: str):
+    db_path = settings.database_url.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        logger.info("History requested for %s but DB not found at %s", name, db_path)
+        return []
+    conn = sqlite3.connect(db_path)
+    _ensure_table(conn)
+    c = conn.cursor()
+    c.execute(
+        "SELECT date, original_text, ai_answer FROM analysis_results WHERE student_name=? ORDER BY date ASC, id ASC",
+        (name,),
+    )
+    rows = c.fetchall()
+    res = []
+    for date, original_text, ai_answer in rows:
+        try:
+            original = json.loads(original_text)
+        except Exception:
+            original = []
+        try:
+            answer = json.loads(ai_answer)
+        except Exception:
+            answer = []
+        res.append({"date": date, "original": original, "answer": answer})
+    conn.close()
+    logger.info("Fetched %d history rows for %s", len(res), name)
+    return res
+
+
+def insert_analysis_result(student_name: str, date: str, original: str, ai_answer: str):
+    db_path = settings.database_url.replace("sqlite:///", "")
+    os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+    conn = sqlite3.connect(db_path)
+    _ensure_table(conn)
+    c = conn.cursor()
+    c.execute(
+        "INSERT INTO analysis_results (student_name, date, original_text, ai_answer) VALUES (?, ?, ?, ?)",
+        (student_name, date, original, ai_answer),
+    )
+    conn.commit()
+    conn.close()
+    logger.debug("Inserted analysis result: student=%s, date=%s", student_name, date)
+
+
+def delete_analysis_results_for_date(student_name: str, date: str):
+    db_path = settings.database_url.replace("sqlite:///", "")
+    if not os.path.exists(db_path):
+        return
+    conn = sqlite3.connect(db_path)
+    _ensure_table(conn)
+    c = conn.cursor()
+    c.execute(
+        "DELETE FROM analysis_results WHERE student_name=? AND date=?",
+        (student_name, date),
+    )
+    conn.commit()
+    conn.close()
+    logger.debug("Deleted previous results for %s on %s", student_name, date)

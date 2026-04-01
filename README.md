@@ -3,8 +3,8 @@
 Сервер для загрузки, хранения и анализа аудиозаписей студентов. Поддерживает:
 - загрузку ZIP-архива с аудиозаписями и метаданными;
 - хранение записей в локальном дереве `records/`;
-- пакетный и одиночный анализ через OpenAI;
-- сохранение результатов анализа в SQLite и экспорт последних результатов в `analysis.csv`.
+- пакетный и одиночный анализ через внешний AI-сервис;
+- сохранение результатов анализа в SQLite.
 
 Интерактивная документация: http://127.0.0.1:5000/docs
 Базовый префикс API: `http://127.0.0.1:5000/api/v1`
@@ -56,20 +56,22 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 5000
 # Корень для хранения загруженных данных
 records_dir=records
 
-# URL БД (SQLAlchemy)
+# URL БД (SQLite в формате SQLAlchemy-пути, будет преобразован в файловый путь)
 database_url=sqlite:///./analysis_results.db
 
-# OpenAI
-openai_api_key=sk-...   # ОБЯЗАТЕЛЕН для работы эндпоинтов анализа
-openai_model=gpt-audio-mini-2025-12-15
+# Модель для внешнего сервиса
+ai_model=gpt-4.1-2025-04-14
 
-# Для совместимости; в текущей реализации не используется напрямую
-ai_analysis_url=https://text-convector-germangch.waw0.amvera.tech/api/v1/send_to_ai_analize
+# Внешний сервис анализа (API root)
+ai_analysis_url=https://text-convector-germangch.waw0.amvera.tech
+
+# Промпты (необязательно, есть значения по умолчанию)
+system_prompt=... 
+user_prompt=Please analyze the following student transcript and provide feedback and a numeric score.
 ```
 
 Примечания:
 - Никогда не коммитьте реальные ключи API в репозиторий.
-- `openai_api_key` должен быть задан, иначе анализ будет недоступен.
 
 ---
 
@@ -79,12 +81,15 @@ ai_analysis_url=https://text-convector-germangch.waw0.amvera.tech/api/v1/send_to
 .
 ├─ app/
 │  ├─ main.py                 # FastAPI-приложение, CORS, подключение роутеров
-│  ├─ routes.py               # Эндпоинты: загрузка/список/скачивание/анализ
 │  ├─ config.py               # Конфигурация через pydantic-settings
+│  ├─ ai_client.py            # Клиент внешнего сервиса (STT и анализ)
+│  ├─ routes/                 # Эндпоинты: загрузка/список/скачивание/анализ
+│  │  ├─ upload_routes.py
+│  │  ├─ student_hierarchy_routes.py
+│  │  └─ analysis_routes.py
 │  └─ DBController/
-│     └─ db_router.py         # SQLite-модель и эндпоинты истории
+│     └─ db_router.py         # Работа с SQLite (sqlite3)
 ├─ records/                   # Хранилище загруженных сессий (создаётся по требованию)
-├─ analysis.csv               # Экспорт последних результатов пакетного анализа
 ├─ requirements.txt
 └─ README.md
 ```
@@ -119,7 +124,8 @@ records/
 - Тело: `multipart/form-data`
   - `data`: JSON-строка (как в схеме выше)
   - `file`: ZIP-архив с аудио
-- Ответ: `{ filename, files_inside, status }`
+  - `student`: опционально, имя студента; если не задано, берётся из `data.student` или `"unknown"`
+- Ответ: `{ filename, files_inside, status, student, date }`
 
 ### Список студентов и дат
 - Метод/путь: `POST /students_hierarhy`
@@ -132,17 +138,20 @@ records/
 
 ### Анализ: пакетный (с сохранением в БД)
 - Метод/путь: `POST /student_analize_record`
-- Параметры: `name`, `date`
-- Результат: сохраняет ответы ИИ в SQLite и перезаписывает `analysis.csv`
-- Ответ: `{ original: string[], answers: string[] }`
+- Тело: `multipart/form-data`
+  - `name`: имя студента
+  - `date`: метка времени сессии (папка в `records/<name>/<date>`)
+- Поведение: для каждого файла из `source_audio/` делает распознавание и анализ, сохраняет результат в SQLite; предыдущие результаты для той же пары (name, date) удаляются
+- Ответ: `{ student, date, processed: [{ file, transcript, ai_answer_present }] }`
 
-### Анализ: одиночный (без записи в БД)
+### Анализ: одиночный (с сохранением в БД)
 - Метод/путь: `POST /student_analyze_single`
 - Тело: `multipart/form-data`
-  - `file`: аудиофайл
-  - `language`: напр. `ru`, `en`
-  - `transcript`: текст расшифровки
-- Ответ: `{ language, transcript, answer }`
+  - `file`: аудиофайл (одна реплика)
+  - `language`: строка (эхается в ответе как часть параметров, в текущей версии не влияет на логику)
+  - `transcript`: опционально, готовая расшифровка; если не задана — выполняется распознавание
+  - `student`: опционально, имя студента
+- Ответ: `{ student, date, transcript, ai_answer }`
 
 ### Данные: история студента
 - Метод/путь: `GET /get_student_history/{name}`
@@ -178,7 +187,9 @@ curl -X POST "http://127.0.0.1:5000/api/v1/student_analyze_single" \
 Пакетный анализ с сохранением:
 
 ```bash
-curl -X POST "http://127.0.0.1:5000/api/v1/student_analize_record?name=pomelo&date=2026-03-11_13-17-27"
+curl -X POST "http://127.0.0.1:5000/api/v1/student_analize_record" \
+  -F "name=pomelo" \
+  -F "date=2026-03-11_13-17-27"
 ```
 
 ---
@@ -186,12 +197,13 @@ curl -X POST "http://127.0.0.1:5000/api/v1/student_analize_record?name=pomelo&da
 ## Безопасность и CORS
 
 - CORS в `app/main.py` сейчас открыт для всех источников — для продакшена ограничьте список доменов.
-- Храните `openai_api_key` только в переменных окружения/`.env` и не публикуйте его.
+- Настройки модели и сервиса задаются через `.env`.
 
 ---
 
 ## Полезные ссылки
 
-- Код приложения: `app/main.py`, `app/routes.py`
-- Модели/БД и история: `app/DBController/db_router.py`
-- Примерные заметки и расширенная документация: `doc.md`
+- Код приложения: [app/main.py](app/main.py), [app/routes/](app/routes/)
+- Работа с БД и история: [app/DBController/db_router.py](app/DBController/db_router.py)
+- Расширенная документация: [doc.md](doc.md)
+- Пример переменных окружения: [.env.example](.env.example)

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 @router.post("/student_analize_record")
-def student_analize_record(name: str= Query(...), date: str = Query(...)):
+def student_analize_record(name: str= Form(...), date: str = Form(...)):
     t0 = time.perf_counter()
     logger.info("Batch analysis start: student=%s, date=%s", name, date)
     # Batch analyze audio files under records/<name>/<date>/source_audio

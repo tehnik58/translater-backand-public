@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     records_dir: str = "records"
     database_url: str = "sqlite:///./analysis_results.db"
-    ai_model: str = "gpt-4.1-2025-04-14"
+    ai_model: str = "gpt-5.1-2025-11-13"
     ai_analysis_url: str = "https://text-convector-germangch.waw0.amvera.tech"
     # Console logging level: DEBUG, INFO, WARNING, ERROR, CRITICAL
     log_level: str = "INFO"

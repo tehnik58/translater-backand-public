@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 @router.post("/upload_records")
 async def upload_records(data: str = Form(...), file: UploadFile = File(...), student: str | None = Form(None)):
+    print(f"student: {student}")
     start = time.perf_counter()
     logger.info("Upload started: filename=%s, content_type=%s, student(form)=%s", file.filename, getattr(file, 'content_type', None), student)
     try:
@@ -20,7 +21,7 @@ async def upload_records(data: str = Form(...), file: UploadFile = File(...), st
     except Exception:
         logger.warning("Invalid JSON in 'data' field during upload of %s", file.filename)
         raise HTTPException(status_code=400, detail="Invalid JSON in 'data' field")
-
+    print(f"student: {metadata.get("student")}")
     student_name = student or metadata.get("student") or "unknown"
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
     base_dir = os.path.join(settings.records_dir, student_name, timestamp)

@@ -1,5 +1,7 @@
 from fastapi import APIRouter, HTTPException
 import os
+
+import urllib
 from config import settings
 from fastapi.responses import StreamingResponse
 import io
@@ -44,4 +46,13 @@ def student_records(student: str, date: str):
                 z.write(path, arcname)
     buf.seek(0)
     logger.info("Student records zipped: %s / %s", student, date)
-    return StreamingResponse(buf, media_type="application/x-zip-compressed", headers={"Content-Disposition": f"attachment; filename={student}_{date}.zip"})
+    #return StreamingResponse(buf, media_type="application/x-zip-compressed", headers={"Content-Disposition": f"attachment; filename={student}_{date}.zip"})
+
+    filename_encoded = urllib.parse.quote(f"{student}_{date}.zip", encoding='utf-8')
+    content_disposition = f"attachment; filename=\"{filename_encoded}\"; filename*=UTF-8"
+
+    return StreamingResponse(
+        buf, 
+        media_type="application/x-zip-compressed",
+        headers={"Content-Disposition": content_disposition}
+    )

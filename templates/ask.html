@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ask Model</title>
+</head>
+<body>
+    <h1>Текстовый запрос к модели</h1>
+    <form action="/api/v1/ask" method="post">
+        <label for="model">Модель:</label><br>
+        <input type="text" id="model" name="model" value="{{ model or '' }}" placeholder="gpt-4o-mini" required><br><br>
+
+        <label for="system_prompt">System prompt:</label><br>
+        <textarea id="system_prompt" name="system_prompt" rows="6" cols="60" required>{{ system_prompt or '' }}</textarea><br><br>
+
+        <label for="user_prompt">User prompt:</label><br>
+        <textarea id="user_prompt" name="user_prompt" rows="6" cols="60" required>{{ user_prompt or '' }}</textarea><br><br>
+
+        <button type="submit">Отправить</button>
+    </form>
+
+    {% if result %}
+    <h2>Ответ модели</h2>
+    <pre>{{ result }}</pre>
+    {% endif %}
+
+    {% if error %}
+    <p style="color:red;">{{ error }}</p>
+    {% endif %}
+</body>
+</html>

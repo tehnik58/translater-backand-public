@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcribe (select model)</title>
+</head>
+<body>
+    <h1>Транскрибация аудио (с выбором модели)</h1>
+    <form action="/api/v1/transcribe_model" method="post" enctype="multipart/form-data">
+        <label for="file">Аудиофайл:</label>
+        <input type="file" id="file" name="file" accept="audio/*" required><br><br>
+
+        <label for="model">Модель транскрибации:</label>
+        <input type="text" id="model" name="model" value="{{ model or '' }}" placeholder="whisper-1" required><br><br>
+
+        <button type="submit">Транскрибировать</button>
+    </form>
+
+    {% if result %}
+    <h2>Результат транскрибации</h2>
+    <pre>{{ result }}</pre>
+    {% endif %}
+
+    {% if error %}
+    <p style="color:red;">{{ error }}</p>
+    {% endif %}
+</body>
+</html>

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analyze Translation</title>
+</head>
+<body>
+    <h1>Analyze Audio Translation</h1>
+    <form action="/api/v1/analyze" method="post" enctype="multipart/form-data">
+        <label for="system_prompt">System Prompt:</label><br>
+        <textarea id="system_prompt" name="system_prompt" rows="10" cols="50" required>{{ system_prompt }}</textarea><br><br>
+        <label for="user_prompt">User Prompt (Original Text):</label><br>
+        <textarea id="user_prompt" name="user_prompt" rows="5" cols="50" required>{{ user_prompt or "" }}</textarea><br><br>
+        <label for="gpt_version">GPT Version (model):</label><br>
+        <input type="text" id="gpt_version" name="gpt_version" value="{{ gpt_version or '' }}" placeholder="gpt-audio-mini-2025-12-15" required><br><br>
+        <label for="file">Upload Audio File:</label>
+        <input type="file" id="file" name="file" accept="audio/*" required><br><br>
+        <button type="submit">Analyze</button>
+    </form>
+    {% if result %}
+    <h2>Analysis Result:</h2>
+    <p>{{ result }}</p>
+    {% endif %}
+    {% if error %}
+    <p style="color:red;">{{ error }}</p>
+    {% endif %}
+</body>
+</html>

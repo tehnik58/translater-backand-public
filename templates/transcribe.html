@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcribe Audio</title>
+</head>
+<body>
+    <h1>Audio Transcription</h1>
+    <form action="/api/v1/transcribe" method="post" enctype="multipart/form-data">
+        <label for="file">Upload Audio File:</label>
+        <input type="file" id="file" name="file" accept="audio/*" required><br><br>
+        <label for="language">Language:</label>
+        <select id="language" name="language">
+            <option value="ru">Russian</option>
+            <option value="en">English</option>
+            <option value="de">German</option>
+            <option value="fr">French</option>
+        </select><br><br>
+        <button type="submit">Transcribe</button>
+    </form>
+    {% if result %}
+    <h2>Transcription Result:</h2>
+    <p>{{ result }}</p>
+    {% endif %}
+    {% if error %}
+    <p style="color:red;">{{ error }}</p>
+    {% endif %}
+</body>
+</html>
